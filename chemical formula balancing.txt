@@ -1,0 +1,183 @@
+# chemical_equation_balancer.py
+import numpy as np
+from collections import defaultdict
+import re
+
+class ChemicalEquationBalancer:
+    def __init__(self):
+        self.elements = set()
+    
+    def parse_molecule(self, molecule):
+        """解析單個分子，返回元素計數字典"""
+        elements = defaultdict(int)
+        
+        # 使用正則表達式匹配元素和數量
+        pattern = r'([A-Z][a-z]*)(\d*)'
+        matches = re.findall(pattern, molecule)
+        
+        for element, count in matches:
+            count = int(count) if count else 1
+            elements[element] += count
+            self.elements.add(element)
+        
+        return elements
+    
+    def parse_side(self, side):
+        """解析方程式的一邊（反應物或生成物）"""
+        molecules = side.split('+')
+        side_elements = defaultdict(int)
+        
+        for mol in molecules:
+            mol = mol.strip()
+            elements = self.parse_molecule(mol)
+            # 暫時假設係數為1，後面會用矩陣求解
+            for element, count in elements.items():
+                side_elements[element] += count
+        
+        return side_elements
+    
+    def build_matrix(self, reactants, products):
+        """建立線性方程組的矩陣"""
+        elements_list = sorted(self.elements)
+        matrix = []
+        
+        for element in elements_list:
+            row = []
+            # 反應物係數（負數）
+            for mol in reactants:
+                row.append(-reactants[mol].get(element, 0))
+            # 生成物係數（正數）
+            for mol in products:
+                row.append(products[mol].get(element, 0))
+            matrix.append(row)
+        
+        return np.array(matrix), elements_list
+    
+    def solve_coefficients(self, matrix):
+        """求解係數"""
+        # 添加一個方程確保係數不全為0（最小化係數和）
+        extra_row = [1] * matrix.shape[1]
+        matrix = np.vstack([matrix, extra_row])
+        
+        # 右邊向量（全0，除了最後一行是1）
+        b = np.zeros(matrix.shape[0])
+        b[-1] = 1
+        
+        try:
+            # 使用最小二乘法求解
+            coefficients = np.linalg.lstsq(matrix, b, rcond=None)[0]
+            
+            # 轉換為最簡整數比
+            coefficients = self.simplify_coefficients(coefficients)
+            return coefficients
+        except:
+            return None
+    
+    def simplify_coefficients(self, coefficients):
+        """將係數轉換為最簡整數比"""
+        # 找到最小的正數係數
+        min_coeff = min([c for c in coefficients if c > 0])
+        
+        # 縮放係數
+        coefficients = coefficients / min_coeff
+        
+        # 嘗試轉換為整數
+        for factor in range(1, 101):
+            scaled = coefficients * factor
+            if all(abs(round(x) - x) < 1e-6 for x in scaled):
+                return [round(x) for x in scaled]
+        
+        return [round(x, 2) for x in coefficients]
+    
+    def balance_equation(self, equation):
+        """平衡化學方程式的主函數"""
+        try:
+            # 分割反應物和生成物
+            if '->' in equation:
+                reactant_side, product_side = equation.split('->')
+            elif '=' in equation:
+                reactant_side, product_side = equation.split('=')
+            else:
+                return "錯誤：請使用 '->' 或 '=' 分隔反應物和生成物"
+            
+            # 解析反應物和生成物
+            reactant_molecules = [mol.strip() for mol in reactant_side.split('+')]
+            product_molecules = [mol.strip() for mol in product_side.split('+')]
+            
+            # 解析每個分子
+            reactants_dict = {}
+            for mol in reactant_molecules:
+                reactants_dict[mol] = self.parse_molecule(mol)
+            
+            products_dict = {}
+            for mol in product_molecules:
+                products_dict[mol] = self.parse_molecule(mol)
+            
+            # 建立矩陣
+            matrix, elements = self.build_matrix(reactants_dict, products_dict)
+            
+            # 求解係數
+            coefficients = self.solve_coefficients(matrix)
+            
+            if coefficients is None:
+                return "無法平衡此方程式"
+            
+            # 構建平衡後的方程式
+            balanced_reactants = []
+            balanced_products = []
+            
+            for i, mol in enumerate(reactant_molecules):
+                coeff = coefficients[i]
+                if coeff != 1:
+                    balanced_reactants.append(f"{coeff}{mol}")
+                else:
+                    balanced_reactants.append(mol)
+            
+            for i, mol in enumerate(product_molecules):
+                coeff = coefficients[i + len(reactant_molecules)]
+                if coeff != 1:
+                    balanced_products.append(f"{coeff}{mol}")
+                else:
+                    balanced_products.append(mol)
+            
+            balanced_eq = " + ".join(balanced_reactants) + " -> " + " + ".join(balanced_products)
+            return balanced_eq
+            
+        except Exception as e:
+            return f"錯誤：{str(e)}"
+
+# 創建平衡器實例
+balancer = ChemicalEquationBalancer()
+
+# 測試範例
+def test_balancer():
+    test_equations = [
+        "H2 + O2 -> H2O",
+        "Fe + O2 -> Fe2O3", 
+        "CH4 + O2 -> CO2 + H2O",
+        "Al + HCl -> AlCl3 + H2",
+        "Na + Cl2 -> NaCl"
+    ]
+    
+    print("🧪 化學方程式平衡測試 🧪\n")
+    
+    for equation in test_equations:
+        print(f"原始方程式: {equation}")
+        balanced = balancer.balance_equation(equation)
+        print(f"平衡後: {balanced}")
+        print("-" * 50)
+
+# 執行測試
+if __name__ == "__main__":
+    test_balancer()
+    
+    # 互動式測試
+    print("\n🎯 互動式平衡器")
+    print("輸入 'quit' 退出")
+    
+    while True:
+        user_input = input("\n請輸入化學方程式: ")
+        if user_input.lower() == 'quit':
+            break
+        result = balancer.balance_equation(user_input)
+        print(f"結果: {result}")
